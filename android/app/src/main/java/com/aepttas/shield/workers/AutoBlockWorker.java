@@ -54,14 +54,16 @@ public class AutoBlockWorker extends Worker {
                     if (reports > 10) {
                         CallerEntity entity = dao.getByPhoneNumber(phone);
                         if (entity == null) {
-                            entity = new CallerEntity(phone, obj.optString("caller_name", "Spammer"));
+                            entity = new CallerEntity();
+                            entity.phoneNumber = phone;
+                            entity.callerName = obj.optString("caller_name", "Spammer");
                         }
                         entity.totalReports = reports;
                         entity.riskScore = Math.min(reports * 5, 100);
                         
-                        // Execute block logic
-                        AutoBlockService.checkAndBlock(getApplicationContext(), entity);
                         dao.insertOrUpdate(entity);
+                        // Execute block logic after persisting the current caller.
+                        AutoBlockService.checkAndBlock(getApplicationContext(), entity);
                     }
                 }
             }

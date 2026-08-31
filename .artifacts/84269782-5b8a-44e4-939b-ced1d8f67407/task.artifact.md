@@ -1,9 +1,7 @@
-# Tasks: Unified Dark Mode Call Shield Popup
+# Tasks: Shield Ultimate Engine Implementation
 
-- `[ ]` [Native Android] Improve contact lookup logic in `ContactUtils.java`
-- `[ ]` [Native Android] Add theme colors to `res/values/colors.xml`
-- `[ ]` [Native Android] Redesign `res/layout/floating_caller_info.xml` for dark theme and buttons
-- `[ ]` [Native Android] Update `PopupService.java` with button listeners and full data binding
-- `[ ]` [Native Android] Enhance `ScreeningService.java` data passing
-- `[ ]` [TypeScript] Prevent duplicate popups in `CallDetectionService.ts`
-- `[ ]` [Verification] Verify build and manual test with "Mohan" contact
+- `[/]` [Backend] Implement pattern detection logic in `main.py`
+- `[ ]` [Backend] Update `calculate_risk_score` with weighted layers
+- `[ ]` [Backend] Update API endpoints to support neighborhood spoofing check
+- `[ ]` [Native] Lower auto-block threshold to 85 in `ScreeningService`
+- `[ ]` [Verification] Final end-to-end spam simulation

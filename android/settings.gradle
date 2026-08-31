@@ -1,0 +1,17 @@
+rootProject.name = 'AepttasShield'
+
+gradle.beforeProject { project ->
+    if (project.name != 'app' && project.name != 'android') {
+        project.ext.compileSdkVersion = 34
+        project.ext.targetSdkVersion = 34
+        project.ext.minSdkVersion = 23
+    }
+}
+
+apply from: file("../node_modules/expo-modules-autolinking/scripts/android/autolinking_implementation.gradle")
+useExpoModules()
+
+apply from: file("../node_modules/@react-native-community/cli-platform-android/native_modules.gradle"); applyNativeModulesSettingsGradle(settings)
+
+include ':app'
+includeBuild('../node_modules/@react-native/gradle-plugin')

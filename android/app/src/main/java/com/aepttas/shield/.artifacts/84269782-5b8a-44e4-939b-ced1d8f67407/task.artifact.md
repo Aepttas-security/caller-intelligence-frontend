@@ -1,6 +1,6 @@
 - [x] Delete `ReactApplicationContext.java` (Done by user)
-- [ ] Fix `reactContext` type in `CallDetectionModule.java`
-- [ ] Rename overloaded `initialize` method in `CallDetectionModule.java`
-- [ ] Remove unused `TelephonyManager` import
-- [ ] Add `@SuppressWarnings("unused")` to event listener methods
-- [ ] Verify changes with `analyze_file`
+- [x] Fix `reactContext` type in `CallDetectionModule.java`
+- [x] Rename overloaded `initialize` method in `CallDetectionModule.java`
+- [x] Remove unused `TelephonyManager` import
+- [x] Add `@SuppressWarnings("unused")` to event listener methods
+- [x] Verify changes with `analyze_file`

@@ -1,0 +1,41 @@
+﻿export default {
+  expo: {
+    name: 'Aepttas Shield',
+    slug: 'aepttas-shield',
+    version: '2.0.0',
+    orientation: 'portrait',
+    jsEngine: 'jsc',
+    icon: './assets/icon.png',
+    userInterfaceStyle: 'light',
+    scheme: 'aepttas-shield',
+    splash: {
+      image: './assets/splash.png',
+      resizeMode: 'contain',
+      backgroundColor: '#ffffff'
+    },
+    assetBundlePatterns: ['**/*'],
+    ios: {
+      supportsTablet: true,
+      bundleIdentifier: 'com.aepttas.shield'
+    },
+    android: {
+      adaptiveIcon: {
+        foregroundImage: './assets/adaptive-icon.png',
+        backgroundColor: '#ffffff'
+      },
+      package: 'com.aepttas.shield',
+      permissions: [
+        'READ_CALL_LOG',
+        'READ_CONTACTS',
+        'READ_PHONE_STATE',
+        'CALL_PHONE',
+        'SYSTEM_ALERT_WINDOW',
+        'FOREGROUND_SERVICE',
+        'POST_NOTIFICATIONS'
+      ]
+    },
+    web: {
+      favicon: './assets/favicon.png'
+    }
+  }
+};

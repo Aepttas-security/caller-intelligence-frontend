@@ -19,23 +19,21 @@ public class AutoBlockService {
     public static void checkAndBlock(Context context, CallerEntity caller) {
         if (caller == null) return;
 
-        // 🛡️ Technique 6: Auto-Block Logic
-        // Logic: 1) Check if total_reports > 10 or risk_score > 70
-        if (caller.totalReports > 10 || caller.riskScore >= 70) {
+        // 🛡️ Prompt 3: Verify Auto-Block logic (Risk Score >= 70)
+        if (caller.riskScore >= 70 || caller.totalReports > 10) {
             Log.w(TAG, "🚨 Auto-Blocking suspicious number: " + caller.phoneNumber);
             
-            // 2) Set is_blocked = true (Local for UI)
+            // Reuse the complete block flow so auto-blocks share the same
+            // backend, alert, blocked-number, and Room-cache behavior.
             caller.isBlocked = true;
+            BlockService.blockNumber(context, caller.phoneNumber, caller.callerName);
             
-            // 3) Update Backend & Block List
-            updateBlockStatusOnBackend(caller.phoneNumber);
-            
-            // 4) Send notification to user
+            // Send notification to user
             NotificationHelper.showSpamAlert(context, caller.callerName, caller.phoneNumber, "Auto-Blocked: Viral Spam Detected");
         }
     }
 
-    private static void updateBlockStatusOnBackend(String phoneNumber) {
+    public static void updateBlockStatusOnBackend(String phoneNumber) {
         executor.execute(() -> {
             try {
                 // API: POST /api/callers/block

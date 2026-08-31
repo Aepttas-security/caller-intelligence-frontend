@@ -50,7 +50,8 @@ class CallDirectoryHandler: CXCallDirectoryProvider {
 
         for number in sortedNumbers {
             if let label = labels[String(number)] {
-                context.addIdentificationEntry(withNextSequentialPhoneNumber: number, label: "🛡️ \(label)")
+                // Remove hardcoded emoji to allow full professional label control from JS
+                context.addIdentificationEntry(withNextSequentialPhoneNumber: number, label: label)
             }
         }
 

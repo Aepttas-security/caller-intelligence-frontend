@@ -6,7 +6,8 @@ export class ErrorHandler {
     service: string,
     message: string,
     level: 'CRITICAL' | 'ERROR' | 'WARNING' = 'ERROR',
-    error?: any
+    error?: any,
+    userId?: string
   ) {
     console.error(`[${service}] ${message}`, error);
 
@@ -21,7 +22,8 @@ export class ErrorHandler {
         service: `${service} (${Platform.OS})`,
         error_level: level,
         message,
-        stack_trace: stackTrace
+        stack_trace: stackTrace,
+        user_id: userId
       });
       console.log('✅ Error logged to database successfully');
     } catch (e) {

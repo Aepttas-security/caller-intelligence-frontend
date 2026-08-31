@@ -41,10 +41,14 @@ public class AptCallsEntity {
     @ColumnInfo(name = "is_synced")
     public boolean isSynced;
 
+    @ColumnInfo(name = "status")
+    public String status;
+
     public AptCallsEntity() {
         this.callUuid = UUID.randomUUID();
         this.callTimestamp = new Date();
         this.isSynced = false;
-        this.userId = 1; // Default UID matching backend get_uid()
+        this.status = "INCOMING";
+        this.userId = 1; // Default user ID as per backend get_uid()
     }
 }

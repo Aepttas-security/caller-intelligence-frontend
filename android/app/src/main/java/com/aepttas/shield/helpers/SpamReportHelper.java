@@ -19,10 +19,11 @@ public class SpamReportHelper {
     private static final ExecutorService executor = Executors.newSingleThreadExecutor();
 
     public static void reportSpam(Context context, String phoneNumber, String category, String comment) {
-        // 🛡️ Technique 4: Aggregated Spam Reports
+        // 🛡️ Technique 5: Spam Report Using apt.apt_callers_b
         executor.execute(() -> {
             try {
-                URL url = new URL(Config.BACKEND_URL + "/api/spam/report");
+                // API: POST /api/callers/report
+                URL url = new URL(Config.BACKEND_URL + "/api/callers/report");
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("POST");
                 conn.setRequestProperty("Content-Type", "application/json");
@@ -31,7 +32,10 @@ public class SpamReportHelper {
 
                 JSONObject report = new JSONObject();
                 report.put("number", phoneNumber);
+                report.put("phone_number", phoneNumber);
+                report.put("caller_name", "Unknown");
                 report.put("category", category);
+                report.put("report_type", category);
                 report.put("comment", comment);
                 report.put("timestamp", System.currentTimeMillis());
 

@@ -21,8 +21,9 @@ The Shield Ultimate Engine uses a **Tri-Layer Weighted Logic** to calculate risk
 
 ### Step-by-Step Execution:
 1.  **Signal Capture**: The `ScreeningService` (Native Android) captures the incoming number before the phone rings.
-2.  **Contact Audit (Local)**: The app checks the phone's built-in address book. If found, Risk = 0 (Safe).
-3.  **Network Lookup (Remote)**: If not in contacts, it queries the Shield Backend.
+2.  **Contact Audit (Local)**: The app checks the phone's built-in address book using fuzzy 10-digit matching. If found, Risk = 0 (Safe).
+3.  **Network Lookup (Remote)**: If not in contacts, it queries the Shield Backend's `live-call/lookup` endpoint.
+4.  **Pattern Analysis (AI-Lite)**: The backend runs the number through regular expressions to find "Machine Signatures".
 
 ### Risk Calculation Logic (The "0-100" Score):
 
@@ -33,11 +34,11 @@ The Shield Ultimate Engine uses a **Tri-Layer Weighted Logic** to calculate risk
 | **Layer 1: DNA** | Marketing Prefix | **+40** | Starts with `140` (Legal telemarketer prefix in India). |
 | **Layer 2: Community** | Viral Blocking | **+50** | If 3+ users in the Shield Network blocked this number today. |
 | **Layer 2: Community** | Mass Dialer | **+30** | Number has called 5+ different Shield users in one hour. |
-| **Layer 3: Context** | Midnight Rule | **+15** | Unknown number calling between 11:00 PM and 6:00 AM. |
+| **Layer 3: Context** | Midnight Rule | **+15** | Unknown caller between 11:00 PM and 6:00 AM. |
 | **Layer 3: Context** | Copycat Rule | **+25** | First 5 digits match the user's own number (Prefix Spoofing). |
 
 ### Example Scenario:
-*   An unknown number `+91 99405 99999` calls at **1:00 AM**.
+*   An unknown number `+91 99405 99999` calls at **1:30 AM**.
 *   **Result**:
     *   Repeating digits `99999` (**+30**)
     *   Midnight Rule (**+15**)
@@ -47,10 +48,9 @@ The Shield Ultimate Engine uses a **Tri-Layer Weighted Logic** to calculate risk
 
 ## 🛠️ Final Fix List (Things to Clean Up)
 
-1.  **[ ] Dashboard Placeholders**: In `DashboardScreen.tsx`, change "Leo Anderson" and the hardcoded email to the actual logged-in user's data from `AuthContext`.
-2.  **[ ] Remove Simulator Buttons**: Remove the "Test Global Popup" and "Simulate Call" buttons from the production build screens.
-3.  **[ ] API Key Security**: Ensure `shield-prod-key-2024` is kept consistent between frontend and backend.
-4.  **[ ] Notification Icon**: Replace the generic `ic_dialog_info` with your actual Aepttas Shield logo in the `PopupService` notification.
+1.  **[ ] Dashboard User Info**: The dashboard now uses the new UI provided by the team. Ensure user data is pulled from the backend instead of "Leo Anderson".
+2.  **[ ] API Key Security**: Ensure `shield-prod-key-2024` is kept consistent between frontend and backend.
+3.  **[ ] Notification Icon**: Replace the generic `ic_dialog_info` with your actual Aepttas Shield logo in the `PopupService` notification.
 
 ---
 

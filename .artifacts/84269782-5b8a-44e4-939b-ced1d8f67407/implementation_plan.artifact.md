@@ -1,47 +1,35 @@
-# Implement iOS Call Directory Extension (Spam Shield for iOS)
+# Implementation Plan - Shield Ultimate Risk Engine
 
-This plan outlines the steps to add spam identification and blocking capabilities to the iOS version of the app using a **Call Directory Extension**.
+This plan implements the comprehensive, lifetime-free spam detection logic using digital patterns, network crowdsourcing, and contextual analysis.
 
 ## User Review Required
 
 > [!IMPORTANT]
-> - **App Groups**: This feature requires an "App Group" to be created in the Apple Developer Portal (e.g., `group.com.aepttas.shield`). You will need to add this entitlement to both the main app and the extension target in Xcode.
-> - **Xcode Target**: Since I cannot physically add a new target to your Xcode project, I will provide the source files and the linking logic. You will need to manually add a "Call Directory Extension" target in Xcode and copy the provided code into it.
+> **Auto-Block Threshold**: Following the proposed logic, calls with a Risk Score of **85 or higher** will be automatically rejected by the system before the phone rings.
+>
+> **Time Zone Note**: The "Midnight Rule" uses the server's current time. For more precision, we would need to pass the user's local time zone from the app, but server time is a safe "Free" starting point.
 
 ## Proposed Changes
 
-### [Native iOS] Call Directory Extension
+### [Backend] Risk Intelligence
 
-#### [NEW] [CallDirectoryHandler.swift](file:///C:/Projects/react-native-app/ios/CallDetection/CallDirectoryHandler.swift)
-- Implement the `CXCallDirectoryProvider` class.
-- Read blocked/identified numbers from a shared `UserDefaults` (using the App Group).
-- Provide the identification labels (e.g., "Suspected Spam") to the system.
+#### [MODIFY] [main.py](file:///C:/Projects/react-native-app/appettas%20Backend%20file-20260729T134558Z-1-001/appettas%20Backend%20file/main.py)
+- **New Logic**: Implement `check_patterns(number)` to detect repetitions, sequences, and risky country codes.
+- **Enhanced `calculate_risk_score`**:
+    - **Digital DNA**: Pattern matching (+30), Staircase rule (+20), Marketing prefixes (+40).
+    - **Shield Community**: Viral blocking check (+50 if 3+ blocks in 24h), Mass dialer check (+30 if calling many unique users).
+    - **Context**: Midnight rule (+15), Copycat/Neighborhood spoofing (+25).
+- **Usage Update**: Pass `receiver_number` to the risk engine during analysis for neighborhood spoofing detection.
 
-#### [MODIFY] [CallDetectionModule.swift](file:///C:/Projects/react-native-app/ios/CallDetection/CallDetectionModule.swift)
-- Add a new method `updateSpamDirectory(numbers: [String], labels: [String])`.
-- Store the data in shared `UserDefaults` using the App Group ID.
-- Request the system to reload the extension via `CXCallDirectoryManager`.
+### [Native Android] Deep Defense
 
-#### [MODIFY] [CallDetectionModule.m](file:///C:/Projects/react-native-app/ios/CallDetection/CallDetectionModule.m)
-- Export the new `updateSpamDirectory` method to React Native.
-
----
-
-### [TypeScript] Call Detection Service
-
-#### [MODIFY] [CallDetectionService.ts](file:///C:/Projects/react-native-app/src/modules/callDetection/services/CallDetectionService.ts)
-- Add a `syncSpamDirectory()` method.
-- Logic:
-  1. Fetch blocked numbers from `apiService.getBlockedNumbers()`.
-  2. Call `CallDetectionModule.updateSpamDirectory()` with the fetched data.
-- Call this method during initialization on iOS.
+#### [MODIFY] [ScreeningService.java](file:///C:/Projects/react-native-app/android/app/src/main/java/com/aepttas/shield/services/ScreeningService.java)
+- **Auto-Block Sync**: Update the pre-ring rejection logic to trigger at **Score >= 85** (previously 90) to match the new professional logic.
 
 ## Verification Plan
 
-### Automated Tests
-- I will verify the TypeScript logic and ensure the native module exports match the frontend calls.
-
 ### Manual Verification
-1. **Xcode Setup**: The user adds the extension target and enables App Groups.
-2. **Sync**: Launch the app on an iPhone; verify in `Settings -> Phone -> Call Blocking & Identification` that "Aepttas Shield" appears.
-3. **Trigger**: Simulate a call from a number in the blocked list; verify the "Suspected Spam" label appears on the system call screen.
+1. **Pattern Test**: Add a contact with digits `123456` and verify its risk score increases.
+2. **Marketing Test**: Simulate a call from a number starting with `140` and verify it is labeled as Spam.
+3. **Neighborhood Test**: Receive a call from a number starting with the same 5 digits as yours; verify the "Neighborhood Spoofing" warning appears.
+4. **Auto-Block Test**: Simulate a call from a known viral spammer (manually adjust DB to test) and verify the call is rejected.

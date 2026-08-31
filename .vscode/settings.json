@@ -1,7 +1,16 @@
 {
-  "editor.codeActionsOnSave": {
-    "source.fixAll": "explicit",
-    "source.organizeImports": "explicit",
-    "source.sortMembers": "explicit"
-  }
+  "java.configuration.updateBuildConfiguration": "disabled",
+  "java.jdt.ls.vmargs": "-XX:+UseParallelGC -XX:GCTimeRatio=4 -XX:AdaptiveSizePolicyWeight=90 -Dsun.zip.disableMemoryMapping=true -Xmx2g -Xms100m",
+  "java.compile.nullAnalysis.mode": "automatic",
+  "java.import.gradle.enabled": false,
+  "java.validate.enabled": false,
+  "java.autobuild.enabled": false,
+  "files.exclude": {
+    "**/.git": true,
+    "**/.DS_Store": true,
+    "**/node_modules": true,
+    "**/android/.gradle": true,
+    "**/android/build": true
+  },
+  "git.ignoreLimitWarning": true
 }

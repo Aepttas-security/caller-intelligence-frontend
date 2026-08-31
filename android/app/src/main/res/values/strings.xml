@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Aepttas Shield</string>
+    <string name="incoming_call">Incoming Call</string>
+    <string name="unknown_caller">Unknown Caller</string>
+    <string name="in_contacts">📇 In Contacts</string>
+    <string name="not_in_contacts">❌ Not in Contacts</string>
+    <string name="spam_detected">🚫 Spam Detected</string>
+    <string name="safe_call">✅ Safe Call</string>
+    <string name="block">Block</string>
+    <string name="report">Report</string>
+    <string name="dismiss">Dismiss</string>
+</resources>

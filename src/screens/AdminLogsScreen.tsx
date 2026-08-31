@@ -32,19 +32,12 @@ export const AdminLogsScreen: React.FC<{ onBack: () => void }> = ({ onBack }) =>
   const [filter, setFilter] = useState<'ALL' | 'CRITICAL' | 'ERROR' | 'WARNING' | 'RECTIFIED'>('ALL');
   const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
 
-  const API_BASE = 'http://192.168.39.211:8002/api/admin';
-
   const fetchLogs = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/logs`);
-      if (response.ok) {
-        const json = await response.json();
-        if (json.status === 'success' && json.logs) {
-          setLogs(json.logs);
-        }
-      } else {
-        throw new Error('Failed to retrieve logs.');
+      const json = await api.getAdminLogs();
+      if (json.status === 'success' && json.logs) {
+        setLogs(json.logs);
       }
     } catch (e) {
       console.warn('Backend logs endpoint offline. Using offline developer mock fallback.');
@@ -89,17 +82,12 @@ export const AdminLogsScreen: React.FC<{ onBack: () => void }> = ({ onBack }) =>
 
   const handleRectifyLog = async (logId: number) => {
     try {
-      const response = await fetch(`${API_BASE}/logs/rectify/${logId}`, {
-        method: 'POST',
-      });
-      const json = await response.json();
-      if (response.ok && json.status === 'success') {
+      const json = await api.rectifyLog(logId);
+      if (json.status === 'success') {
         Alert.alert('Success', `Log entry #${logId} successfully marked as resolved.`);
         setLogs(prev =>
           prev.map(log => (log.id === logId ? { ...log, rectified: true } : log))
         );
-      } else {
-        throw new Error();
       }
     } catch (e) {
       // Local fallback mapping logic

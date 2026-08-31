@@ -3,18 +3,32 @@ package com.aepttas.shield.db;
 import androidx.annotation.NonNull;
 import androidx.room.ColumnInfo;
 import androidx.room.Entity;
+import androidx.room.Index;
 import androidx.room.PrimaryKey;
 
-@Entity(tableName = "apt_callers_b")
+import java.util.Date;
+import java.util.UUID;
+
+@Entity(tableName = "apt_callers_b", indices = {@Index(value = {"phone_number"}, unique = true)})
 public class CallerEntity {
     
     @PrimaryKey
+    @NonNull
+    @ColumnInfo(name = "id")
+    public UUID id;
+
     @NonNull
     @ColumnInfo(name = "phone_number")
     public String phoneNumber;
 
     @ColumnInfo(name = "caller_name")
     public String callerName;
+
+    @ColumnInfo(name = "carrier")
+    public String carrier;
+
+    @ColumnInfo(name = "location")
+    public String location;
 
     @ColumnInfo(name = "risk_score")
     public int riskScore;
@@ -28,31 +42,43 @@ public class CallerEntity {
     @ColumnInfo(name = "call_frequency")
     public int callFrequency;
 
+    @ColumnInfo(name = "avg_duration")
+    public int avgDuration;
+
+    @ColumnInfo(name = "answered_calls")
+    public int answeredCalls;
+
+    @ColumnInfo(name = "total_calls")
+    public int totalCalls;
+
+    @ColumnInfo(name = "safe_reports")
+    public int safeReports;
+
+    @ColumnInfo(name = "last_report_date")
+    public Date lastReportDate;
+
+    @ColumnInfo(name = "previous_risk_score")
+    public int previousRiskScore;
+
+    @ColumnInfo(name = "risk_trend")
+    public float riskTrend;
+
     @ColumnInfo(name = "is_spam")
     public boolean isSpam;
 
     @ColumnInfo(name = "is_blocked")
     public boolean isBlocked;
 
-    @ColumnInfo(name = "carrier")
-    public String carrier;
+    @ColumnInfo(name = "created_at")
+    public Date createdAt;
 
-    @ColumnInfo(name = "location")
-    public String location;
+    @ColumnInfo(name = "updated_at")
+    public Date updatedAt;
 
-    @ColumnInfo(name = "aliases")
-    public String aliases; // Store as JSON string
-
-    @ColumnInfo(name = "last_updated")
-    public long lastUpdated;
-
-    public CallerEntity() {}
-
-    public CallerEntity(@NonNull String phoneNumber, String callerName) {
-        this.phoneNumber = phoneNumber;
-        this.callerName = callerName;
+    public CallerEntity() {
+        this.id = UUID.randomUUID();
+        this.createdAt = new Date();
+        this.updatedAt = new Date();
         this.reputationScore = 50;
-        this.totalReports = 1;
-        this.lastUpdated = System.currentTimeMillis();
     }
 }

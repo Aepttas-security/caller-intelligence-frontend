@@ -1,0 +1,2550 @@
+import React, { useState, useEffect } from 'react';
+import {
+  StyleSheet,
+  View,
+  Text,
+  TouchableOpacity,
+  ScrollView,
+  TextInput,
+  Switch,
+  Modal,
+  Platform,
+  ToastAndroid,
+  Alert,
+  StatusBar,
+  ActivityIndicator,
+  RefreshControl,
+  PermissionsAndroid,
+} from 'react-native';
+import { LinearGradient } from '../components/Gradient';
+import Svg, { Circle, Path, G, Rect } from 'react-native-svg';
+import { colors } from '../styles/theme';
+import { Icon } from '../components/Icon';
+import { useAppContext } from '../src/context/AppContext';
+import api from '../src/services/api';
+
+// Import Call Detection (Android only)
+let CallDetector: any = null;
+if (Platform.OS === "android") {
+  try {
+    CallDetector = require("react-native-call-detection").default;
+  } catch (e) {
+    console.log("Call detection not available:", e);
+  }
+}
+
+// Import CallKit (iOS only)
+let RNCallKit: any = null;
+if (Platform.OS === "ios") {
+  try {
+    RNCallKit = require("react-native-callkit").default;
+  } catch (e) {
+    console.log("CallKit not available:", e);
+  }
+}
+
+interface CallerIntelligenceScreenProps {
+  onBack: () => void;
+}
+
+export const CallerIntelligenceScreen: React.FC<CallerIntelligenceScreenProps> = ({ onBack }) => {
+  // ============ CONTEXT ============
+  const {
+    dashboardData,
+    alerts,
+    blockedNumbers,
+    unreadCount,
+    loading,
+    refreshDashboard,
+    refreshBlockedNumbers,
+    refreshCallHistory,
+    refreshSettings,
+    markAlertRead,
+    blockNumber,
+    unblockNumber,
+    settings,
+    updateSettings,
+  } = useAppContext();
+
+  // ============ TABS ============
+  const tabs = ['Dashboard', 'Live Call', 'Search', 'History', 'Settings'];
+  const [activeTab, setActiveTab] = useState<number>(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const [callHistory, setCallHistory] = useState<any[]>([]);
+
+  // ============ SEARCH STATES ============
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [showAddUser, setShowAddUser] = useState(false);
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserCarrier, setNewUserCarrier] = useState('');
+  const [newUserLocation, setNewUserLocation] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+  const [isBlocking, setIsBlocking] = useState(false);
+  const [isUnblocking, setIsUnblocking] = useState(false);
+  const [filterSensitivity, setFilterSensitivity] = useState(true);
+
+  // ============ REPORT HISTORY ============
+  const [reportHistory, setReportHistory] = useState<{
+    id: string;
+    number: string;
+    type: string;
+    description: string;
+    timestamp: string;
+  }[]>([]);
+
+  // ============ CALL DETECTION STATES ============
+  const [callListener, setCallListener] = useState<any>(null);
+  const [isCallDetecting, setIsCallDetecting] = useState(false);
+  const [callPermissionGranted, setCallPermissionGranted] = useState(false);
+
+  // ============ SETTINGS ============
+  const [autoBlockEnabled, setAutoBlockEnabled] = useState(
+    settings?.auto_block_calls ?? true,
+  );
+  const [notificationsEnabled, setNotificationsEnabled] = useState(
+    settings?.notifications_enabled ?? true,
+  );
+  const [privacyLogging, setPrivacyLogging] = useState(
+    settings?.privacy_mode ?? false,
+  );
+
+  // ============ SIMULATOR ============
+  const [activeSimulatedCall, setActiveSimulatedCall] = useState<{
+    name: string;
+    number: string;
+    riskScore: number;
+    type: string;
+    carrier: string;
+    location: string;
+  } | null>(null);
+
+  // ============ POPUPS ============
+  const [showSpamWarning, setShowSpamWarning] = useState(false);
+  const [showScamAlert, setShowScamAlert] = useState(false);
+  const [showHighRiskAlert, setShowHighRiskAlert] = useState(false);
+  const [showBlockConfirmation, setShowBlockConfirmation] = useState(false);
+  const [showReportPopup, setShowReportPopup] = useState(false);
+
+  // ============ REPORTING ============
+  const [reportType, setReportType] = useState('Robocall / Telemarketing');
+  const [reportDesc, setReportDesc] = useState('');
+  const [callerToBlockOrReport, setCallerToBlockOrReport] = useState<any>(null);
+
+  // ============ TOAST ============
+  const showToast = (message: string) => {
+    if (Platform.OS === 'android') {
+      ToastAndroid.show(message, ToastAndroid.SHORT);
+    } else {
+      Alert.alert('Notice', message);
+    }
+  };
+
+  // ============ CALCULATE RISK SCORE ============
+  const calculateRiskScore = (phoneNumber: string): number => {
+    const digits = phoneNumber.replace(/\D/g, "");
+    let riskScore = 30;
+
+    const isBlocked = blockedNumbers.some(
+      (b) => b.phone_number === phoneNumber,
+    );
+    if (isBlocked) riskScore += 30;
+
+    if (digits.length === 10) {
+      const firstThree = digits.substring(0, 3);
+      const lastFour = digits.substring(6, 10);
+      if (firstThree === "555" || firstThree === "888" || firstThree === "999") {
+        riskScore += 10;
+      }
+      if (lastFour === "0000" || lastFour === "1111" || lastFour === "1234") {
+        riskScore += 10;
+      }
+    }
+
+    if (phoneNumber.startsWith("+") && !phoneNumber.startsWith("+1")) {
+      riskScore += 10;
+    }
+
+    return Math.min(100, riskScore);
+  };
+
+  // ============ GET RISK LEVEL ============
+  const getRiskLevel = (score: number) => {
+    if (score > 80) return { level: "Critical", color: colors.redDanger };
+    if (score >= 50) return { level: "High", color: colors.orangeWarning };
+    if (score >= 10) return { level: "Medium", color: "#facc15" };
+    return { level: "Low", color: colors.greenSuccess };
+  };
+
+  // ============ GET HISTORY STATUS - LIGHT RAG COLORS ============
+  const getHistoryStatus = (call: any) => {
+    if (call.is_blocked) {
+      return {
+        status: "Blocked",
+        color: "#ef4444",
+        bgColor: 'rgba(239, 68, 68, 0.15)',
+        icon: "●"
+      };
+    }
+    if (call.risk_score >= 50) {
+      return {
+        status: "Suspicious",
+        color: "#f59e0b",
+        bgColor: 'rgba(245, 158, 11, 0.15)',
+        icon: "●"
+      };
+    }
+    if (call.risk_score >= 10) {
+      return {
+        status: "Spam",
+        color: "#facc15",
+        bgColor: 'rgba(250, 204, 21, 0.15)',
+        icon: "●"
+      };
+    }
+    return {
+      status: "Safe",
+      color: "#10b981",
+      bgColor: 'rgba(16, 185, 129, 0.15)',
+      icon: "●"
+    };
+  };
+
+  // ============ GET CALL TYPE COLOR ============
+  const getCallTypeColor = (type: string) => {
+    switch (type) {
+      case 'Safe': return colors.greenSuccess;
+      case 'Spam': return '#facc15';
+      case 'Scam': return colors.orangeWarning;
+      case 'High-Risk': return colors.redDanger;
+      default: return colors.textMuted;
+    }
+  };
+
+  const getCallTypeBg = (type: string) => {
+    switch (type) {
+      case 'Safe': return 'rgba(16, 185, 129, 0.2)';
+      case 'Spam': return 'rgba(250, 204, 21, 0.2)';
+      case 'Scam': return 'rgba(245, 158, 11, 0.2)';
+      case 'High-Risk': return 'rgba(239, 68, 68, 0.2)';
+      default: return 'rgba(255, 255, 255, 0.05)';
+    }
+  };
+
+  // ============ REQUEST PERMISSIONS ============
+  const requestCallPermission = async () => {
+    if (Platform.OS === "android") {
+      try {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.READ_CALL_LOG,
+          {
+            title: "Call Detection Permission",
+            message: "This app needs access to your call log to detect incoming calls and protect you from spam.",
+            buttonNeutral: "Ask Me Later",
+            buttonNegative: "Cancel",
+            buttonPositive: "OK",
+          },
+        );
+        if (granted === PermissionsAndroid.RESULTS.GRANTED) {
+          setCallPermissionGranted(true);
+          startCallDetection();
+          return true;
+        } else {
+          Alert.alert("Permission Required", "Call detection will not work without permission.", [{ text: "OK" }]);
+          return false;
+        }
+      } catch (err) {
+        console.warn("Permission error:", err);
+        return false;
+      }
+    }
+    return true;
+  };
+
+  // ============ START CALL DETECTION ============
+  const startCallDetection = () => {
+    if (Platform.OS === "android" && CallDetector) {
+      try {
+        if (callListener) callListener.dispose();
+        const listener = new CallDetector(
+          (callState: any) => {
+            if (callState.status === "Incoming") {
+              handleIncomingCall(callState.number);
+            }
+          },
+          (error: any) => console.error("Call detection error:", error),
+          "Incoming",
+        );
+        setCallListener(listener);
+        setIsCallDetecting(true);
+        showToast("Call detection active");
+      } catch (error) {
+        console.error("Failed to start call detection:", error);
+        showToast("Failed to start call detection");
+      }
+    } else if (Platform.OS === "ios" && RNCallKit) {
+      try {
+        RNCallKit.setup({
+          appName: "Call Management App",
+          maximumCallGroups: 1,
+          maximumCallsPerCallGroup: 1,
+          supportsVideo: false,
+        });
+        RNCallKit.addEventListener("didReceiveStartCallAction", (call: any) => {
+          const phoneNumber = call.handle || call.number || call.callerNumber;
+          if (phoneNumber) handleIncomingCall(phoneNumber);
+        });
+        setIsCallDetecting(true);
+        showToast("Call detection active (iOS)");
+      } catch (error) {
+        console.error("Failed to start iOS call detection:", error);
+        showToast("Failed to start iOS call detection");
+      }
+    }
+  };
+
+  // ============ STOP CALL DETECTION ============
+  const stopCallDetection = () => {
+    if (Platform.OS === "android" && callListener) {
+      try {
+        callListener.dispose();
+        setCallListener(null);
+        setIsCallDetecting(false);
+      } catch (error) {
+        console.error("Error stopping call detection:", error);
+      }
+    } else if (Platform.OS === "ios" && RNCallKit) {
+      try {
+        RNCallKit.removeEventListener("didReceiveStartCallAction");
+        setIsCallDetecting(false);
+      } catch (error) {
+        console.error("Error stopping iOS call detection:", error);
+      }
+    }
+  };
+
+  // ============ TOGGLE CALL DETECTION ============
+  const toggleCallDetection = () => {
+    if (isCallDetecting) {
+      stopCallDetection();
+    } else {
+      if (Platform.OS === "android") {
+        if (callPermissionGranted) {
+          startCallDetection();
+        } else {
+          requestCallPermission();
+        }
+      } else {
+        startCallDetection();
+      }
+    }
+  };
+
+  // ============ HANDLE INCOMING CALL ============
+  const handleIncomingCall = async (phoneNumber: string) => {
+    try {
+      const isBlocked = blockedNumbers.some((b) => b.phone_number === phoneNumber);
+      if (isBlocked) {
+        showToast(`Blocked number: ${phoneNumber}`);
+        return;
+      }
+
+      const calculatedRisk = calculateRiskScore(phoneNumber);
+      const riskLevel = getRiskLevel(calculatedRisk);
+
+      const callData = {
+        caller_number: phoneNumber,
+        caller_name: "Unknown Caller",
+        receiver_number: "+1 (555) 000-0000",
+        duration: 0,
+        call_type: "Incoming" as const,
+        risk_score: calculatedRisk,
+      };
+
+      await api.analyzeCall(callData);
+
+      if (calculatedRisk > 80) {
+        Alert.alert(
+          "Critical Risk Call",
+          `Call from ${phoneNumber}\nRisk Score: ${calculatedRisk}%\nLevel: ${riskLevel.level}\nThis call has been automatically blocked.`,
+          [{ text: "OK" }],
+        );
+        showToast(`Critical call blocked from ${phoneNumber}`);
+      } else if (calculatedRisk >= 50) {
+        Alert.alert(
+          "High Risk Call",
+          `Call from ${phoneNumber}\nRisk Score: ${calculatedRisk}%\nLevel: ${riskLevel.level}\nThis call has been flagged.`,
+          [
+            {
+              text: "Block",
+              onPress: () => handleBlockNumber(phoneNumber, "Unknown Caller", "High risk call detected"),
+            },
+            { text: "Allow", style: "cancel" },
+          ],
+        );
+        showToast(`High risk call from ${phoneNumber}`);
+      } else {
+        showToast(`Safe call from ${phoneNumber} - Risk: ${calculatedRisk}%`);
+      }
+
+      await Promise.all([
+        refreshCallHistory(),
+        refreshDashboard(),
+        refreshBlockedNumbers(),
+        fetchCallHistory(),
+      ]);
+    } catch (error: any) {
+      console.error("Failed to analyze incoming call:", error);
+      showToast("Failed to analyze call");
+    }
+  };
+
+  // ============ FETCH DATA ============
+  const fetchCallHistory = async () => {
+    try {
+      const data = await api.getCallHistory({ limit: 20 });
+      setCallHistory(data as any[]);
+    } catch (error) {
+      console.error("Failed to fetch call history:", error);
+      setCallHistory([]);
+    }
+  };
+
+  // ============ SYNC SETTINGS ============
+  useEffect(() => {
+    if (settings) {
+      setAutoBlockEnabled(settings.auto_block_calls);
+      setNotificationsEnabled(settings.notifications_enabled);
+      setPrivacyLogging(settings.privacy_mode);
+    }
+  }, [settings]);
+
+  // ============ FETCH ON MOUNT ============
+  useEffect(() => {
+    fetchCallHistory();
+    if (Platform.OS === "android") {
+      requestCallPermission();
+    }
+    return () => {
+      stopCallDetection();
+    };
+  }, []);
+
+  // ============ REFRESH ============
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await Promise.all([
+      refreshDashboard(),
+      refreshBlockedNumbers(),
+      refreshCallHistory(),
+      fetchCallHistory(),
+    ]);
+    setRefreshing(false);
+  };
+
+  // ============ SEARCH HANDLER - FIXED ============
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) {
+      showToast("Please enter a name or phone number");
+      return;
+    }
+
+    setIsSearching(true);
+    setSearchResults([]);
+    setShowAddUser(false);
+
+    try {
+      const cleanQuery = searchQuery.trim();
+      const result = await api.searchAllNumbers(cleanQuery);
+
+      let resultsArray = [];
+      if (Array.isArray(result)) {
+        resultsArray = result;
+      } else if (result && typeof result === 'object' && result.phone_number) {
+        resultsArray = [result];
+      } else {
+        resultsArray = [];
+      }
+
+      if (resultsArray.length > 0) {
+        const resultsWithBlockStatus = resultsArray.map((item: any) => {
+          const isBlocked = blockedNumbers.some(
+            (b) => b.phone_number === item.phone_number,
+          );
+          return {
+            ...item,
+            is_blocked: isBlocked,
+          };
+        });
+        setSearchResults(resultsWithBlockStatus);
+        showToast(`Found ${resultsWithBlockStatus.length} contact(s)`);
+      } else {
+        setSearchResults([]);
+        setNewUserName("");
+        setNewUserCarrier("");
+        setNewUserLocation("");
+        setShowAddUser(true);
+        showToast("No contacts found. Add new?");
+      }
+    } catch (error: any) {
+      console.error("Search error:", error);
+      setSearchResults([]);
+      setNewUserName("");
+      setNewUserCarrier("");
+      setNewUserLocation("");
+      setShowAddUser(true);
+      showToast("No contacts found. Add new?");
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // ============ ADD NEW USER ============
+  const handleAddNewUser = async () => {
+    if (!searchQuery.trim()) {
+      showToast("Please enter a phone number");
+      return;
+    }
+    if (!newUserName.trim()) {
+      showToast("Please enter a caller name");
+      return;
+    }
+
+    try {
+      const cleanNumber = searchQuery.trim().replace(/[^\d+]/g, "");
+
+      const result = await api.addNewCaller({
+        phone_number: cleanNumber,
+        caller_name: newUserName.trim(),
+        carrier: newUserCarrier || "Unknown Carrier",
+        location: newUserLocation || "Unknown Location",
+        reputation_score: 5.0,
+        total_reports: 0,
+        call_frequency: 0,
+      });
+
+      console.log("Contact added to database:", result);
+
+      showToast(`✅ Contact saved: ${newUserName}`);
+      setShowAddUser(false);
+      setSearchQuery("");
+      setNewUserName("");
+      setNewUserCarrier("");
+      setNewUserLocation("");
+      setSearchResults([]);
+
+      await refreshBlockedNumbers();
+      await refreshDashboard();
+      await refreshCallHistory();
+      await fetchCallHistory();
+    } catch (error: any) {
+      console.error("Failed to add contact:", error);
+      showToast(error?.message || "Failed to add contact");
+    }
+  };
+
+  // ============ BLOCK FROM SEARCH ============
+  const handleBlockFromSearch = async (phoneNumber: string, callerName: string) => {
+    setIsBlocking(true);
+    try {
+      await blockNumber({
+        phone_number: phoneNumber,
+        caller_name: callerName,
+        block_reason: "User blocked from search",
+      });
+
+      setSearchResults((prev) =>
+        prev.map((item) =>
+          item.phone_number === phoneNumber ? { ...item, is_blocked: true } : item
+        )
+      );
+
+      showToast(`Blocked: ${phoneNumber}`);
+      await refreshBlockedNumbers();
+      await refreshDashboard();
+      await refreshCallHistory();
+      await fetchCallHistory();
+    } catch (error: any) {
+      showToast(error?.message || "Failed to block");
+    } finally {
+      setIsBlocking(false);
+    }
+  };
+
+  // ============ UNBLOCK FROM SEARCH ============
+  const handleUnblockFromSearch = async (phoneNumber: string) => {
+    setIsUnblocking(true);
+    try {
+      await unblockNumber(phoneNumber);
+
+      setSearchResults((prev) =>
+        prev.map((item) =>
+          item.phone_number === phoneNumber ? { ...item, is_blocked: false } : item
+        )
+      );
+
+      showToast(`Unblocked: ${phoneNumber}`);
+      await refreshBlockedNumbers();
+      await refreshDashboard();
+      await refreshCallHistory();
+      await fetchCallHistory();
+    } catch (error: any) {
+      showToast(error?.message || "Failed to unblock");
+    } finally {
+      setIsUnblocking(false);
+    }
+  };
+
+  // ============ BLOCK NUMBER ============
+  const handleBlockNumber = async (phoneNumber: string, name: string, reason: string) => {
+    setIsBlocking(true);
+    try {
+      await blockNumber({
+        phone_number: phoneNumber,
+        caller_name: name,
+        block_reason: reason,
+      });
+      showToast(`Blocked: ${phoneNumber}`);
+      await Promise.all([
+        refreshBlockedNumbers(),
+        refreshDashboard(),
+        refreshCallHistory(),
+        fetchCallHistory(),
+      ]);
+    } catch (error: any) {
+      showToast(error?.message || "Failed to block number");
+    } finally {
+      setIsBlocking(false);
+    }
+  };
+
+  // ============ UNBLOCK NUMBER ============
+  const handleUnblockNumber = async (phoneNumber: string) => {
+    setIsUnblocking(true);
+    try {
+      await unblockNumber(phoneNumber);
+      showToast(`Unblocked: ${phoneNumber}`);
+      await Promise.all([
+        refreshBlockedNumbers(),
+        refreshDashboard(),
+        refreshCallHistory(),
+        fetchCallHistory(),
+      ]);
+    } catch (error: any) {
+      showToast(error?.message || "Failed to unblock number");
+    } finally {
+      setIsUnblocking(false);
+    }
+  };
+
+  // ============ UPDATE SETTINGS - FIXED ============
+  const handleUpdateSettings = async () => {
+    try {
+      const updated = await updateSettings({
+        auto_block_calls: autoBlockEnabled,
+        notifications_enabled: notificationsEnabled,
+        privacy_mode: privacyLogging,
+      });
+      // Sync local state with response
+      setAutoBlockEnabled(updated.auto_block_calls);
+      setNotificationsEnabled(updated.notifications_enabled);
+      setPrivacyLogging(updated.privacy_mode);
+      showToast("Settings updated successfully");
+      await refreshSettings();
+    } catch (error) {
+      console.error("Failed to update settings:", error);
+      showToast("Failed to update settings");
+      // Revert to saved settings on error
+      await refreshSettings();
+    }
+  };
+
+  // ============ SIMULATE CALL ============
+  const handleSimulateCall = async (callType: string) => {
+    let callData;
+
+    switch (callType) {
+      case "Safe":
+        callData = {
+          name: "Father Leo",
+          number: "+1 (555) 019-2831",
+          riskScore: 5,
+          type: "Safe",
+          carrier: "Verizon Wireless",
+          location: "San Jose, CA",
+        };
+        setActiveSimulatedCall(callData);
+        break;
+
+      case "Spam":
+        callData = {
+          name: "Telemarketing Robocall",
+          number: "+1 (202) 555-0143",
+          riskScore: 65,
+          type: "Spam",
+          carrier: "Level 3 Telecom",
+          location: "Seattle, WA",
+        };
+        setActiveSimulatedCall(callData);
+        setShowSpamWarning(true);
+        break;
+
+      case "Scam":
+        callData = {
+          name: "IRS Impostor Fraud",
+          number: "+1 (866) 492-3001",
+          riskScore: 85,
+          type: "Scam",
+          carrier: "VoIP Core",
+          location: "Washington DC, USA",
+        };
+        setActiveSimulatedCall(callData);
+        setShowScamAlert(true);
+        break;
+
+      case "High-Risk":
+        callData = {
+          name: "Bank Fraud Hijacker",
+          number: "+1 (800) 999-5566",
+          riskScore: 99,
+          type: "High-Risk",
+          carrier: "Imposter Network",
+          location: "New York, USA",
+        };
+        setActiveSimulatedCall(callData);
+        setShowHighRiskAlert(true);
+        break;
+
+      default:
+        callData = {
+          name: "Unknown Caller",
+          number: "+1 (555) 000-0000",
+          riskScore: 50,
+          type: "Unknown",
+          carrier: "Unknown",
+          location: "Unknown",
+        };
+        setActiveSimulatedCall(callData);
+    }
+
+    try {
+      const saveData = {
+        caller_number: callData.number,
+        caller_name: callData.name,
+        receiver_number: "+1 (555) 000-0000",
+        duration: Math.floor(Math.random() * 120) + 10,
+        call_type: "Incoming" as const,
+        risk_score: callData.riskScore,
+      };
+
+      await api.analyzeCall(saveData);
+      await Promise.all([
+        refreshCallHistory(),
+        refreshDashboard(),
+        refreshBlockedNumbers(),
+        fetchCallHistory(),
+      ]);
+    } catch (error) {
+      console.error("Failed to save call:", error);
+    }
+  };
+
+  // ============ SCORE GAUGE ============
+  const radius = 40;
+  const strokeWidth = 6;
+  const circumference = 2 * Math.PI * radius;
+  const score = dashboardData?.security_score || 94;
+  const angle = (score / 100) * 260;
+  const strokeDashoffset = circumference - (angle / 360) * circumference;
+
+  // ============ RENDER ============
+  return (
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={colors.background} />
+      <View style={styles.contentWrapper}>
+
+        {/* Header Bar */}
+        <View style={styles.header}>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => {
+              if (activeTab !== 0) {
+                setActiveTab(0);
+              } else {
+                onBack();
+              }
+            }}
+          >
+            <Icon name="arrow-back" color="#fff" size={20} />
+          </TouchableOpacity>
+          <View style={styles.headerTitleContainer}>
+            <Text style={styles.headerTitle}>Caller Intelligence</Text>
+            <Text style={styles.headerSubtitle}>Real-Time Call Shield & Spam Analysis Hub</Text>
+          </View>
+          {unreadCount > 0 && (
+            <View style={styles.headerBadge}>
+              <Text style={styles.headerBadgeText}>{unreadCount}</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Call Detection Status Bar */}
+        <View style={[
+          styles.statusBar,
+          isCallDetecting ? styles.statusActive : styles.statusInactive,
+        ]}>
+          <View style={[
+            styles.statusDot,
+            isCallDetecting ? styles.dotActive : styles.dotInactive,
+          ]} />
+          <Text style={styles.statusBarText}>
+            {isCallDetecting ? `Call Detection Active (${Platform.OS === "ios" ? "iOS" : "Android"})` : "Call Detection Off"}
+          </Text>
+          <TouchableOpacity onPress={toggleCallDetection} style={styles.statusToggle}>
+            <Text style={styles.statusToggleText}>{isCallDetecting ? "Stop" : "Start"}</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Tabs Row */}
+        <View style={styles.tabsRowContainer}>
+          <ScrollView horizontal={true} showsHorizontalScrollIndicator={false} style={styles.tabsRow}>
+            {tabs.map((label, idx) => {
+              const isSelected = activeTab === idx;
+              return (
+                <TouchableOpacity
+                  key={label}
+                  style={[styles.tabBtn, isSelected && styles.tabBtnActive]}
+                  onPress={() => setActiveTab(idx)}
+                >
+                  <Text style={[styles.tabBtnText, isSelected && styles.tabBtnTextActive]}>
+                    {label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+
+        {/* VIEW PANEL CONTROLLER */}
+        <ScrollView
+          contentContainerStyle={styles.viewContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={[colors.cyanAccent]}
+            />
+          }
+        >
+          {loading && !dashboardData ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={colors.cyanAccent} />
+              <Text style={styles.loadingText}>Loading...</Text>
+            </View>
+          ) : (
+            <>
+              {/* ==================== TAB 0: DASHBOARD ==================== */}
+              {activeTab === 0 && (
+                <View style={{ width: '100%' }}>
+                  <View style={styles.dashboardCard}>
+                    <View style={styles.gaugeRow}>
+                      <View style={styles.gaugeContainer}>
+                        <Svg width={90} height={90} viewBox="0 0 100 100">
+                          <G rotation="-220" origin="50, 50">
+                            <Circle
+                              cx="50"
+                              cy="50"
+                              r={radius}
+                              stroke="#140c3f"
+                              strokeWidth={strokeWidth}
+                              fill="none"
+                              strokeDasharray={`${(260 / 360) * circumference} ${circumference}`}
+                              strokeLinecap="round"
+                            />
+                            <Circle
+                              cx="50"
+                              cy="50"
+                              r={radius}
+                              stroke={colors.cyanAccent}
+                              strokeWidth={strokeWidth}
+                              fill="none"
+                              strokeDasharray={circumference}
+                              strokeDashoffset={strokeDashoffset}
+                              strokeLinecap="round"
+                            />
+                          </G>
+                        </Svg>
+                        <View style={styles.gaugeTextWrapper}>
+                          <Text style={styles.gaugePct}>{Math.round(score)}%</Text>
+                          <Text style={styles.gaugeLabel}>Secure</Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.gaugeInfo}>
+                        <Text style={styles.gaugeInfoTitle}>Caller Security Score</Text>
+                        <Text style={styles.gaugeInfoSub}>Shield is actively filtering unknown incoming calls.</Text>
+                        <View style={styles.statusBadge}>
+                          <View style={styles.greenStatusDot} />
+                          <Text style={styles.statusText}>Protected & Safe</Text>
+                        </View>
+                      </View>
+                    </View>
+                  </View>
+
+                  <View style={styles.statsRow}>
+                    <View style={styles.statWidget}>
+                      <Text style={styles.statWidgetLabel}>Calls Today</Text>
+                      <Text style={styles.statWidgetValue}>
+                        {dashboardData?.total_calls_today || 0}
+                      </Text>
+                    </View>
+                    <View style={[styles.statWidget, { borderColor: colors.orangeWarning + '55' }]}>
+                      <Text style={styles.statWidgetLabel}>Spam Calls</Text>
+                      <Text style={[styles.statWidgetValue, { color: colors.orangeWarning }]}>
+                        {dashboardData?.spam_calls_detected || 0}
+                      </Text>
+                    </View>
+                    <View style={[styles.statWidget, { borderColor: colors.redDanger + '55' }]}>
+                      <Text style={styles.statWidgetLabel}>Blocked</Text>
+                      <Text style={[styles.statWidgetValue, { color: colors.redDanger }]}>
+                        {dashboardData?.blocked_calls_count || 0}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <Text style={styles.sectionTitle}>RECENT SECURITY ALERTS</Text>
+                  {alerts.slice(0, 5).length === 0 ? (
+                    <View style={styles.listEmptyPlaceholder}>
+                      <Icon name="check" color={colors.greenSuccess} size={48} />
+                      <Text style={styles.placeholderText}>No alerts to display</Text>
+                    </View>
+                  ) : (
+                    alerts.slice(0, 5).map((alert, idx) => (
+                      <TouchableOpacity
+                        key={idx}
+                        style={[styles.alertItem, !alert.is_read && styles.alertUnread]}
+                        onPress={() => !alert.is_read && markAlertRead(alert.id)}
+                      >
+                        <Icon name="notifications-active" color={colors.cyanAccent} size={16} />
+                        <Text style={styles.alertText} numberOfLines={2}>{alert.message}</Text>
+                        {!alert.is_read && <View style={styles.alertDot} />}
+                      </TouchableOpacity>
+                    ))
+                  )}
+
+                  <Text style={[styles.sectionTitle, { marginTop: 20 }]}>QUICK ACTION CHANNELS</Text>
+                  <View style={styles.statsRow}>
+                    <TouchableOpacity style={styles.actionWidget} onPress={() => setActiveTab(1)}>
+                      <Icon name="phone-callback" color={colors.greenSuccess} size={24} />
+                      <Text style={styles.actionWidgetTitle}>Simulate Live Call</Text>
+                      <Text style={styles.actionWidgetSub}>Test shield triggers</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity style={styles.actionWidget} onPress={() => setActiveTab(2)}>
+                      <Icon name="search" color={colors.cyanAccent} size={24} />
+                      <Text style={styles.actionWidgetTitle}>Search & Manage</Text>
+                      <Text style={styles.actionWidgetSub}>Find or add numbers</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Ad Section */}
+                  <View style={[styles.modalContent, { borderColor: '#ffd900', borderWidth: 1, marginTop: 24 }]}>
+                    <View style={styles.adHeader}>
+                      <Icon name="info" color="#ffd900" size={14} />
+                      <Text style={styles.adHeaderTag}>SPONSORED BY FLIPKART</Text>
+                    </View>
+
+                    <View style={styles.adBanner}>
+                      <Svg width="100%" height="100%" style={StyleSheet.absoluteFill as any}>
+                        <Circle cx="120" cy="60" r="60" fill="#2874f0" opacity={0.1} />
+                        <Circle cx="120" cy="60" r="40" fill="#ffd900" opacity={0.1} />
+                        <Path d="M107 45 A15 15 0 0 1 133 45" fill="none" stroke="#ffd900" strokeWidth="2" />
+                        <Rect x="100" y="45" width="40" height="50" rx="4" ry="4" fill="#2874f0" />
+                      </Svg>
+                      <View style={styles.adBannerTexts}>
+                        <Text style={styles.adBannerTitle}>BIG BILLION DAYS</Text>
+                        <Text style={styles.adBannerSub}>UP TO 80% OFF ON ALL CATEGORIES</Text>
+                      </View>
+                    </View>
+
+                    <Text style={styles.adMainTitle}>Flipkart Mega Deals Live!</Text>
+                    <Text style={styles.adDescription}>
+                      Get massive discounts on Smartphones, Laptops, Fashion & Home Decor. Extra 10% instant discount with HDFC, SBI and Axis Credit Cards. Limited hours remaining!
+                    </Text>
+
+                    <TouchableOpacity
+                      style={styles.adCtaBtn}
+                      onPress={() => showToast('Redirecting to Flipkart Special Deal store...')}
+                    >
+                      <LinearGradient
+                        colors={['#2874f0', '#ffd900']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={styles.adCtaGradient}
+                      >
+                        <Text style={styles.adCtaBtnText}>Claim Flipkart Deals Now</Text>
+                      </LinearGradient>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+
+              {/* ==================== TAB 1: LIVE CALL ==================== */}
+              {activeTab === 1 && (
+                <View style={{ width: '100%' }}>
+                  <Text style={styles.sectionTitle}>ACTIVE INCOMING CALL SIMULATION ENGINE</Text>
+                  <View style={styles.simulatorBtnsRow}>
+                    <TouchableOpacity
+                      style={[styles.simBtn, { borderColor: colors.greenSuccess }]}
+                      onPress={() => handleSimulateCall("Safe")}
+                    >
+                      <Text style={styles.simBtnText}>Safe Call</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.simBtn, { borderColor: '#facc15' }]}
+                      onPress={() => handleSimulateCall("Spam")}
+                    >
+                      <Text style={styles.simBtnText}>Spam Call</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.simBtn, { borderColor: colors.orangeWarning }]}
+                      onPress={() => handleSimulateCall("Scam")}
+                    >
+                      <Text style={styles.simBtnText}>Scam Call</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.simBtn, { borderColor: colors.redDanger }]}
+                      onPress={() => handleSimulateCall("High-Risk")}
+                    >
+                      <Text style={styles.simBtnText}>High-Risk Call</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {activeSimulatedCall ? (
+                    <View style={[
+                      styles.callScreenCard,
+                      { backgroundColor: getCallTypeBg(activeSimulatedCall.type) }
+                    ]}>
+                      <Icon
+                        name="phone-in-talk"
+                        color={getCallTypeColor(activeSimulatedCall.type)}
+                        size={48}
+                      />
+                      <Text style={styles.callScreenName}>{activeSimulatedCall.name}</Text>
+                      <Text style={styles.callScreenNumber}>{activeSimulatedCall.number}</Text>
+                      <Text style={styles.callScreenCarrier}>
+                        Carrier: {activeSimulatedCall.carrier} | Location: {activeSimulatedCall.location}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.callScreenScore,
+                          { color: getCallTypeColor(activeSimulatedCall.type) }
+                        ]}
+                      >
+                        Risk Score: {activeSimulatedCall.riskScore}%
+                      </Text>
+
+                      <View style={styles.callActionsRow}>
+                        <TouchableOpacity
+                          style={[styles.callBtn, { backgroundColor: 'rgba(107, 110, 133, 0.2)' }]}
+                          onPress={() => {
+                            showToast(`Call allowed from ${activeSimulatedCall.name}`);
+                            setActiveSimulatedCall(null);
+                          }}
+                        >
+                          <Text style={styles.callBtnText}>Allow</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={[styles.callBtn, { backgroundColor: colors.redDanger }]}
+                          onPress={() => {
+                            setCallerToBlockOrReport(activeSimulatedCall);
+                            setShowBlockConfirmation(true);
+                          }}
+                        >
+                          <Text style={styles.callBtnText}>Block</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={[styles.callBtn, { backgroundColor: colors.cyanAccent }]}
+                          onPress={() => {
+                            setCallerToBlockOrReport(activeSimulatedCall);
+                            setReportDesc('');
+                            setShowReportPopup(true);
+                          }}
+                        >
+                          <Text style={[styles.callBtnText, { color: '#000' }]}>Report</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ) : (
+                    <View style={styles.callScreenCardEmpty}>
+                      <Icon name="phone-in-talk" color="#6B6E85" size={48} />
+                      <Text style={styles.emptyCallText}>No simulated call active. Tap one of the triggers above.</Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* ==================== TAB 2: SEARCH ==================== */}
+              {activeTab === 2 && (
+                <View style={{ width: '100%' }}>
+                  <View style={styles.searchCard}>
+                    <Text style={styles.searchTitle}>📞 Contacts</Text>
+                    <Text style={styles.searchSub}>Search, add, and manage your contacts</Text>
+
+                    <View style={styles.searchInputRow}>
+                      <TextInput
+                        style={styles.searchInput}
+                        placeholder="Search by name or number"
+                        placeholderTextColor={colors.textMuted}
+                        value={searchQuery}
+                        onChangeText={setSearchQuery}
+                      />
+                      <TouchableOpacity style={styles.searchBtn} onPress={handleSearch} disabled={isSearching}>
+                        {isSearching ? (
+                          <ActivityIndicator size="small" color="#000" />
+                        ) : (
+                          <Text style={styles.searchBtnText}>Search</Text>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+
+                    <TouchableOpacity style={styles.addNewUserBtn} onPress={() => {
+                      setSearchQuery('');
+                      setSearchResults([]);
+                      setNewUserName('');
+                      setNewUserCarrier('');
+                      setNewUserLocation('');
+                      setShowAddUser(true);
+                    }}>
+                      <Icon name="person-add" color={colors.cyanAccent} size={20} />
+                      <Text style={styles.addNewUserBtnText}>Add New Contact</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {isSearching && (
+                    <View style={styles.loadingContainer}>
+                      <ActivityIndicator size="large" color={colors.cyanAccent} />
+                      <Text style={styles.loadingText}>Searching...</Text>
+                    </View>
+                  )}
+
+                  {/* ADD NEW USER FORM */}
+                  {showAddUser && !isSearching && (
+                    <View style={styles.addUserCard}>
+                      <View style={styles.addUserHeader}>
+                        <Icon name="person-add" color={colors.cyanAccent} size={24} />
+                        <Text style={styles.addUserTitle}>New Contact</Text>
+                      </View>
+                      <Text style={styles.addUserSub}>Add a new contact to your database</Text>
+
+                      <View style={styles.addUserInputGroup}>
+                        <Text style={styles.addUserLabel}>Phone Number *</Text>
+                        <TextInput
+                          style={styles.addUserInput}
+                          placeholder="Enter phone number"
+                          placeholderTextColor={colors.textMuted}
+                          value={searchQuery}
+                          onChangeText={setSearchQuery}
+                          keyboardType="phone-pad"
+                        />
+                      </View>
+
+                      <View style={styles.addUserInputGroup}>
+                        <Text style={styles.addUserLabel}>Contact Name *</Text>
+                        <TextInput
+                          style={styles.addUserInput}
+                          placeholder="Enter contact name"
+                          placeholderTextColor={colors.textMuted}
+                          value={newUserName}
+                          onChangeText={setNewUserName}
+                        />
+                      </View>
+
+                      <View style={styles.addUserInputGroup}>
+                        <Text style={styles.addUserLabel}>Carrier (Optional)</Text>
+                        <TextInput
+                          style={styles.addUserInput}
+                          placeholder="e.g., Verizon, AT&T"
+                          placeholderTextColor={colors.textMuted}
+                          value={newUserCarrier}
+                          onChangeText={setNewUserCarrier}
+                        />
+                      </View>
+
+                      <View style={styles.addUserInputGroup}>
+                        <Text style={styles.addUserLabel}>Location (Optional)</Text>
+                        <TextInput
+                          style={styles.addUserInput}
+                          placeholder="e.g., New York, NY"
+                          placeholderTextColor={colors.textMuted}
+                          value={newUserLocation}
+                          onChangeText={setNewUserLocation}
+                        />
+                      </View>
+
+                      <View style={styles.addUserActionsRow}>
+                        <TouchableOpacity
+                          style={[styles.addUserActionBtn, styles.cancelBtn]}
+                          onPress={() => {
+                            setShowAddUser(false);
+                            setSearchQuery('');
+                            setNewUserName('');
+                            setNewUserCarrier('');
+                            setNewUserLocation('');
+                          }}
+                        >
+                          <Text style={styles.cancelBtnText}>Cancel</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={[styles.addUserActionBtn, styles.saveBtn]}
+                          onPress={handleAddNewUser}
+                        >
+                          <Icon name="check" color="#fff" size={16} />
+                          <Text style={styles.saveBtnText}>Save Contact</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  )}
+
+                  {/* SEARCH RESULTS */}
+                  {searchResults.length > 0 && !isSearching && (
+                    <View style={styles.searchResultsContainer}>
+                      <Text style={styles.searchResultsCount}>
+                        {searchResults.length} contact{searchResults.length > 1 ? 's' : ''} found
+                      </Text>
+                      {searchResults.map((result, index) => (
+                        <View key={index} style={styles.searchResultCard}>
+                          <View style={styles.resultHeader}>
+                            <View style={styles.resultAvatar}>
+                              <Text style={styles.resultAvatarText}>
+                                {result.caller_name ? result.caller_name.charAt(0).toUpperCase() : '?'}
+                              </Text>
+                            </View>
+                            <View style={styles.resultHeaderInfo}>
+                              <Text style={styles.resultName}>{result.caller_name}</Text>
+                              <Text style={styles.resultPhone}>{result.phone_number}</Text>
+                            </View>
+                          </View>
+
+                          <View style={styles.resultDivider} />
+
+                          <View style={styles.resultDetails}>
+                            <View style={styles.resultDetailRow}>
+                              <Text style={styles.resultDetailLabel}>Carrier</Text>
+                              <Text style={styles.resultDetailValue}>{result.carrier || 'Unknown'}</Text>
+                            </View>
+                            <View style={styles.resultDetailRow}>
+                              <Text style={styles.resultDetailLabel}>Location</Text>
+                              <Text style={styles.resultDetailValue}>{result.location || 'Unknown'}</Text>
+                            </View>
+                            <View style={styles.resultDetailRow}>
+                              <Text style={styles.resultDetailLabel}>Risk Score</Text>
+                              <Text style={[
+                                styles.resultDetailValue,
+                                {
+                                  color: result.risk_score > 80 ? colors.redDanger :
+                                         result.risk_score > 50 ? colors.orangeWarning :
+                                         result.risk_score > 10 ? '#facc15' :
+                                         colors.greenSuccess,
+                                  fontWeight: 'bold'
+                                }
+                              ]}>
+                                {result.risk_score}% - {getRiskLevel(result.risk_score).level}
+                              </Text>
+                            </View>
+                            <View style={styles.resultDetailRow}>
+                              <Text style={styles.resultDetailLabel}>Status</Text>
+                              <Text style={[
+                                styles.resultDetailValue,
+                                {
+                                  color: result.is_blocked ? colors.redDanger : colors.greenSuccess,
+                                  fontWeight: 'bold'
+                                }
+                              ]}>
+                                {result.is_blocked ? '🔴 Blocked' : '🟢 Active'}
+                              </Text>
+                            </View>
+                          </View>
+
+                          <View style={styles.resultActions}>
+                            {result.is_blocked ? (
+                              <TouchableOpacity
+                                style={[styles.resultActionBtn, styles.unblockActionBtn]}
+                                onPress={() => handleUnblockFromSearch(result.phone_number)}
+                                disabled={isUnblocking}
+                              >
+                                {isUnblocking ? (
+                                  <ActivityIndicator size="small" color={colors.greenSuccess} />
+                                ) : (
+                                  <>
+                                    <Icon name="lock-open" color={colors.greenSuccess} size={18} />
+                                    <Text style={[styles.resultActionText, { color: colors.greenSuccess }]}>
+                                      Unblock
+                                    </Text>
+                                  </>
+                                )}
+                              </TouchableOpacity>
+                            ) : (
+                              <TouchableOpacity
+                                style={[styles.resultActionBtn, styles.blockActionBtn]}
+                                onPress={() => handleBlockFromSearch(result.phone_number, result.caller_name)}
+                                disabled={isBlocking}
+                              >
+                                {isBlocking ? (
+                                  <ActivityIndicator size="small" color="#fff" />
+                                ) : (
+                                  <>
+                                    <Icon name="lock" color="#fff" size={18} />
+                                    <Text style={[styles.resultActionText, { color: '#fff' }]}>
+                                      Block
+                                    </Text>
+                                  </>
+                                )}
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* ==================== TAB 3: HISTORY - LIGHT RAG COLORS ==================== */}
+              {activeTab === 3 && (
+                <View style={{ width: '100%' }}>
+                  <Text style={styles.sectionTitle}>CALL HISTORY LOGS</Text>
+                  {callHistory.length > 0 ? (
+                    callHistory.slice(0, 10).map((call, idx) => {
+                      const { status, color, bgColor, icon } = getHistoryStatus(call);
+
+                      return (
+                        <View key={idx} style={[styles.historyRow, { backgroundColor: bgColor }]}>
+                          <View style={styles.historyIndicator} />
+                          <View style={styles.historyLeft}>
+                            <Text style={styles.historyName}>{call.caller_name || 'Unknown'}</Text>
+                            <Text style={styles.historyNumber}>{call.caller_number}</Text>
+                            <View style={styles.historyStatusRow}>
+                              <Text style={styles.historyDate}>Risk: {call.risk_score}%</Text>
+                              <Text style={[styles.historyStatus, { color }]}>
+                                {icon} {status}
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+                      );
+                    })
+                  ) : (
+                    <View style={styles.listEmptyPlaceholder}>
+                      <Icon name="phone" color={colors.textMuted} size={48} />
+                      <Text style={styles.placeholderText}>No call history yet.</Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* ==================== TAB 4: SETTINGS ==================== */}
+              {activeTab === 4 && (
+                <View style={{ width: '100%' }}>
+                  <View style={styles.settingCard}>
+                    <View style={styles.switchRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.settingTitle}>Auto-Block High-Risk Calls</Text>
+                        <Text style={styles.settingSub}>Silently terminate known fraud senders</Text>
+                      </View>
+                      <Switch
+                        value={autoBlockEnabled}
+                        onValueChange={async (value) => {
+                          setAutoBlockEnabled(value);
+                          await handleUpdateSettings();
+                        }}
+                        trackColor={{ true: colors.purpleAccent }}
+                      />
+                    </View>
+
+                    <View style={[styles.switchRow, { marginTop: 20 }]}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.settingTitle}>Spam Alert Notifications</Text>
+                        <Text style={styles.settingSub}>Display floating warning banners for risk callers</Text>
+                      </View>
+                      <Switch
+                        value={notificationsEnabled}
+                        onValueChange={async (value) => {
+                          setNotificationsEnabled(value);
+                          await handleUpdateSettings();
+                        }}
+                        trackColor={{ true: colors.purpleAccent }}
+                      />
+                    </View>
+
+                    <View style={[styles.switchRow, { marginTop: 20 }]}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.settingTitle}>Filter Sensitivity</Text>
+                        <Text style={styles.settingSub}>Enable AI-based risk filtering for incoming calls</Text>
+                      </View>
+                      <Switch
+                        value={filterSensitivity}
+                        onValueChange={async (value) => {
+                          setFilterSensitivity(value);
+                          showToast(value ? 'Filter Sensitivity Enabled' : 'Filter Sensitivity Disabled');
+                        }}
+                        trackColor={{ true: colors.purpleAccent }}
+                      />
+                    </View>
+
+                    <View style={styles.cardDivider} />
+
+                    <View style={styles.switchRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.settingTitle}>Privacy-Preserving Logging</Text>
+                        <Text style={styles.settingSub}>Anonymize numbers before threat analysis uploads</Text>
+                      </View>
+                      <Switch
+                        value={privacyLogging}
+                        onValueChange={async (value) => {
+                          setPrivacyLogging(value);
+                          await handleUpdateSettings();
+                        }}
+                        trackColor={{ true: colors.purpleAccent }}
+                      />
+                    </View>
+                  </View>
+                </View>
+              )}
+            </>
+          )}
+        </ScrollView>
+
+        {/* ==================== MODAL POPUPS ==================== */}
+
+        {/* POPUP 1: SPAM WARNING DIALOG - Yellow */}
+        <Modal transparent={true} visible={showSpamWarning && activeSimulatedCall !== null} animationType="fade">
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, { borderColor: '#facc15' }]}>
+              <View style={styles.popupHeader}>
+                <Icon name="warning" color="#facc15" size={36} />
+                <Text style={styles.popupTitle}>SPAM CALL DETECTED</Text>
+              </View>
+              {activeSimulatedCall && (
+                <>
+                  <Text style={styles.popupSub}>Number: {activeSimulatedCall.number}</Text>
+                  <Text style={[styles.popupRiskText, { color: '#facc15' }]}>
+                    Risk Score: {activeSimulatedCall.riskScore}%
+                  </Text>
+                  <Text style={styles.popupDesc}>
+                    This number matches active automated spam networks. We recommend blocking this caller.
+                  </Text>
+
+                  <View style={styles.popupActions}>
+                    <TouchableOpacity
+                      style={[styles.popupBtn, { backgroundColor: 'rgba(107, 110, 133, 0.2)' }]}
+                      onPress={() => {
+                        showToast('Call allowed under observation');
+                        setShowSpamWarning(false);
+                      }}
+                    >
+                      <Text style={styles.popupBtnText}>Allow</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.popupBtn, { backgroundColor: colors.redDanger }]}
+                      onPress={() => {
+                        handleBlockNumber(activeSimulatedCall.number, activeSimulatedCall.name, 'Spam Network Warning');
+                        setActiveSimulatedCall(null);
+                        setShowSpamWarning(false);
+                      }}
+                    >
+                      <Text style={styles.popupBtnText}>Block</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+            </View>
+          </View>
+        </Modal>
+
+        {/* POPUP 2: SCAM WARNING DIALOG - Orange */}
+        <Modal transparent={true} visible={showScamAlert && activeSimulatedCall !== null} animationType="fade">
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, { borderColor: colors.orangeWarning, backgroundColor: '#2E0914' }]}>
+              <View style={styles.popupHeader}>
+                <Icon name="gavel" color={colors.orangeWarning} size={36} />
+                <Text style={styles.popupTitle}>SCAM WARNING</Text>
+              </View>
+              {activeSimulatedCall && (
+                <>
+                  <Text style={[styles.popupRiskText, { color: colors.orangeWarning, fontWeight: '900' }]}>
+                    Threat Level: HIGH RISK
+                  </Text>
+                  <Text style={styles.popupSub}>Caller: {activeSimulatedCall.name}</Text>
+                  <Text style={styles.popupSub}>Number: {activeSimulatedCall.number}</Text>
+                  <Text style={styles.popupDesc}>
+                    Recommended Action: HANG UP IMMEDIATELY. This caller has been reported trying to spoof government bodies for credential fraud.
+                  </Text>
+
+                  <View style={styles.popupActions}>
+                    <TouchableOpacity style={styles.popupTextBtn} onPress={() => setShowScamAlert(false)}>
+                      <Text style={styles.popupTextBtnText}>Dismiss Alert</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.popupBtn, { backgroundColor: colors.redDanger }]}
+                      onPress={() => {
+                        handleBlockNumber(activeSimulatedCall.number, activeSimulatedCall.name, 'Scam Warning Block');
+                        setActiveSimulatedCall(null);
+                        setShowScamAlert(false);
+                      }}
+                    >
+                      <Text style={styles.popupBtnText}>Block & Report</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+            </View>
+          </View>
+        </Modal>
+
+        {/* POPUP 3: HIGH-RISK CALLER DIALOG - Red */}
+        <Modal transparent={true} visible={showHighRiskAlert && activeSimulatedCall !== null} animationType="fade">
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, { borderColor: colors.redDanger, backgroundColor: '#2e0000' }]}>
+              <View style={styles.popupHeader}>
+                <Icon name="cancel" color={colors.redDanger} size={44} />
+                <Text style={styles.popupTitle}>CRITICAL: HIGH RISK ATTACK</Text>
+              </View>
+              {activeSimulatedCall && (
+                <>
+                  <Text style={[styles.popupRiskText, { color: colors.redDanger, fontWeight: '900' }]}>
+                    Risk Evaluation Score: {activeSimulatedCall.riskScore}%
+                  </Text>
+                  <Text style={styles.popupDesc}>
+                    This caller is linked to known financial phishing campaigns. The connection is highly suspicious.
+                  </Text>
+
+                  <TouchableOpacity
+                    style={[styles.primaryBtn, { backgroundColor: colors.redDanger, height: 46 }]}
+                    onPress={() => {
+                      handleBlockNumber(activeSimulatedCall.number, activeSimulatedCall.name, 'Critical AI High-Risk Auto-Block');
+                      setActiveSimulatedCall(null);
+                      setShowHighRiskAlert(false);
+                    }}
+                  >
+                    <Text style={styles.primaryBtnText}>IMMEDIATE BLOCK SENDER</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity style={[styles.popupTextBtn, { marginTop: 12 }]} onPress={() => setShowHighRiskAlert(false)}>
+                    <Text style={styles.popupTextBtnText}>Ignore Risk (Dangerous)</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          </View>
+        </Modal>
+
+        {/* POPUP 4: BLOCK CONFIRMATION */}
+        <Modal transparent={true} visible={showBlockConfirmation && callerToBlockOrReport !== null} animationType="fade">
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <Text style={styles.popupTitle}>Confirm Block Caller</Text>
+              {callerToBlockOrReport && (
+                <>
+                  <Text style={styles.popupDesc}>
+                    Are you sure you want to block calls and texts from {callerToBlockOrReport.name} ({callerToBlockOrReport.number})?
+                  </Text>
+
+                  <View style={styles.popupActions}>
+                    <TouchableOpacity style={styles.popupTextBtn} onPress={() => setShowBlockConfirmation(false)}>
+                      <Text style={styles.popupTextBtnText}>Cancel</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.popupBtn, { backgroundColor: colors.redDanger }]}
+                      onPress={() => {
+                        handleBlockNumber(callerToBlockOrReport.number, callerToBlockOrReport.name, 'User Block');
+                        setActiveSimulatedCall(null);
+                        setShowBlockConfirmation(false);
+                      }}
+                    >
+                      <Text style={styles.popupBtnText}>Confirm Block</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+            </View>
+          </View>
+        </Modal>
+
+        {/* POPUP 5: REPORT SENDER FORM */}
+        <Modal transparent={true} visible={showReportPopup && callerToBlockOrReport !== null} animationType="slide">
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, { borderColor: colors.cyanAccent }]}>
+              <Text style={styles.popupTitle}>Report Caller to Threat Database</Text>
+              {callerToBlockOrReport && (
+                <>
+                  <Text style={styles.reportFormLabel}>Report Type:</Text>
+                  {['Robocall / Telemarketing', 'Phishing / Identity Theft', 'Government Impersonation', 'Harassment'].map(type => (
+                    <TouchableOpacity
+                      key={type}
+                      style={styles.radioRow}
+                      onPress={() => setReportType(type)}
+                    >
+                      <View style={styles.radioOuter}>
+                        {reportType === type && <View style={styles.radioInner} />}
+                      </View>
+                      <Text style={styles.radioLabel}>{type}</Text>
+                    </TouchableOpacity>
+                  ))}
+
+                  <TextInput
+                    style={styles.reportInput}
+                    placeholder="Incident Description (Optional)"
+                    placeholderTextColor={colors.textMuted}
+                    value={reportDesc}
+                    onChangeText={setReportDesc}
+                    multiline={true}
+                  />
+
+                  <View style={styles.popupActions}>
+                    <TouchableOpacity style={styles.popupTextBtn} onPress={() => setShowReportPopup(false)}>
+                      <Text style={styles.popupTextBtnText}>Cancel</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.popupBtn, { backgroundColor: colors.cyanAccent }]}
+                      onPress={() => {
+                        setReportHistory([
+                          ...reportHistory,
+                          {
+                            id: Math.random().toString(),
+                            number: callerToBlockOrReport.number,
+                            type: reportType,
+                            description: reportDesc || 'No description provided.',
+                            timestamp: new Date().toLocaleString(),
+                          }
+                        ]);
+                        showToast('Report Submitted. Thank you for securing the network!');
+                        setShowReportPopup(false);
+                      }}
+                    >
+                      <Text style={[styles.popupBtnText, { color: '#000' }]}>Submit Report</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+            </View>
+          </View>
+        </Modal>
+      </View>
+    </View>
+  );
+};
+
+// ============ STYLES ============
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  contentWrapper: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 720,
+    alignSelf: 'center',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 12,
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#0F0A2B',
+    borderWidth: 1,
+    borderColor: '#337b2cbf',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerTitleContainer: {
+    marginLeft: 16,
+    flex: 1,
+  },
+  headerTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  headerSubtitle: {
+    color: '#6B6E85',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  headerBadge: {
+    backgroundColor: colors.redDanger,
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    minWidth: 24,
+    alignItems: 'center',
+  },
+  headerBadgeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  statusBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginHorizontal: 16,
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  statusActive: {
+    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    borderWidth: 1,
+    borderColor: colors.greenSuccess,
+  },
+  statusInactive: {
+    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+    borderWidth: 1,
+    borderColor: colors.redDanger,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  dotActive: {
+    backgroundColor: colors.greenSuccess,
+  },
+  dotInactive: {
+    backgroundColor: colors.redDanger,
+  },
+  statusBarText: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  statusToggle: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 4,
+    backgroundColor: colors.cyanAccent,
+  },
+  statusToggleText: {
+    color: '#000',
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  tabsRowContainer: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    paddingBottom: 6,
+  },
+  tabsRow: {
+    paddingHorizontal: 14,
+  },
+  tabBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#07051F',
+    borderWidth: 1,
+    borderColor: 'rgba(123, 44, 191, 0.12)',
+    marginRight: 8,
+  },
+  tabBtnActive: {
+    backgroundColor: 'rgba(0, 119, 182, 0.2)',
+    borderColor: '#00E5FF',
+  },
+  tabBtnText: {
+    fontSize: 11,
+    color: '#6B6E85',
+  },
+  tabBtnTextActive: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  viewContent: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    paddingBottom: 40,
+  },
+  loadingContainer: {
+    paddingVertical: 40,
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: colors.textMuted,
+    marginTop: 12,
+  },
+  dashboardCard: {
+    width: '100%',
+    borderRadius: 14,
+    backgroundColor: '#0A0726',
+    borderWidth: 1,
+    borderColor: 'rgba(123, 44, 191, 0.2)',
+    padding: 16,
+  },
+  gaugeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  gaugeContainer: {
+    position: 'relative',
+    width: 90,
+    height: 90,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  gaugeTextWrapper: {
+    position: 'absolute',
+    alignItems: 'center',
+  },
+  gaugePct: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  gaugeLabel: {
+    color: '#6B6E85',
+    fontSize: 8,
+  },
+  gaugeInfo: {
+    flex: 1,
+    marginLeft: 16,
+  },
+  gaugeInfoTitle: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  gaugeInfoSub: {
+    color: '#6B6E85',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  greenStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#00E676',
+  },
+  statusText: {
+    color: '#00E676',
+    fontSize: 10,
+    marginLeft: 6,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginTop: 16,
+  },
+  statWidget: {
+    flex: 0.31,
+    borderRadius: 10,
+    backgroundColor: '#0A0726',
+    borderWidth: 0.5,
+    borderColor: 'rgba(123, 44, 191, 0.2)',
+    padding: 12,
+  },
+  statWidgetLabel: {
+    color: '#6B6E85',
+    fontSize: 10,
+  },
+  statWidgetValue: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '900',
+    marginTop: 4,
+  },
+  sectionTitle: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#6B6E85',
+    letterSpacing: 1,
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  alertItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 8,
+    backgroundColor: '#0F0923',
+    borderWidth: 0.5,
+    borderColor: 'rgba(123, 44, 191, 0.2)',
+    padding: 12,
+    width: '100%',
+    marginBottom: 8,
+  },
+  alertUnread: {
+    borderLeftWidth: 3,
+    borderLeftColor: colors.cyanAccent,
+  },
+  alertText: {
+    color: '#fff',
+    fontSize: 11,
+    marginLeft: 10,
+    flex: 1,
+  },
+  alertDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.cyanAccent,
+    marginLeft: 8,
+  },
+  actionWidget: {
+    flex: 0.48,
+    borderRadius: 10,
+    backgroundColor: '#0A0726',
+    padding: 14,
+  },
+  actionWidgetTitle: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginTop: 8,
+  },
+  actionWidgetSub: {
+    color: '#6B6E85',
+    fontSize: 9,
+    marginTop: 2,
+  },
+  simulatorBtnsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  simBtn: {
+    width: '48%',
+    height: 40,
+    borderRadius: 8,
+    borderWidth: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  simBtnText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  callScreenCard: {
+    width: '100%',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(123, 44, 191, 0.22)',
+    padding: 24,
+    alignItems: 'center',
+  },
+  callScreenCardEmpty: {
+    width: '100%',
+    height: 260,
+    borderRadius: 14,
+    backgroundColor: '#0A0726',
+    borderWidth: 1,
+    borderColor: 'rgba(123, 44, 191, 0.12)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  emptyCallText: {
+    color: '#6B6E85',
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 12,
+    lineHeight: 16,
+  },
+  callScreenName: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginTop: 16,
+  },
+  callScreenNumber: {
+    fontSize: 14,
+    color: '#6B6E85',
+    marginTop: 4,
+  },
+  callScreenCarrier: {
+    fontSize: 12,
+    color: '#6B6E85',
+    marginTop: 2,
+  },
+  callScreenScore: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginTop: 12,
+  },
+  callActionsRow: {
+    flexDirection: 'row',
+    width: '100%',
+    justifyContent: 'space-between',
+    marginTop: 28,
+  },
+  callBtn: {
+    flex: 0.31,
+    height: 40,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  callBtnText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 13,
+  },
+  searchCard: {
+    width: '100%',
+    borderRadius: 14,
+    backgroundColor: colors.cardBackground,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 16,
+  },
+  searchTitle: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: 'bold',
+  },
+  searchSub: {
+    color: colors.textMuted,
+    fontSize: 12,
+    marginTop: 4,
+  },
+  searchInputRow: {
+    flexDirection: 'row',
+    marginTop: 16,
+  },
+  searchInput: {
+    flex: 1,
+    height: 44,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+    color: '#fff',
+    paddingHorizontal: 12,
+    fontSize: 14,
+  },
+  searchBtn: {
+    width: 70,
+    height: 44,
+    backgroundColor: colors.cyanAccent,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+  searchBtnText: {
+    color: '#000',
+    fontWeight: 'bold',
+    fontSize: 13,
+  },
+  addNewUserBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.cyanAccent,
+    backgroundColor: 'rgba(6, 182, 212, 0.1)',
+  },
+  addNewUserBtnText: {
+    color: colors.cyanAccent,
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginLeft: 8,
+  },
+  addUserCard: {
+    width: '100%',
+    borderRadius: 14,
+    backgroundColor: colors.cardBackground,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 16,
+    marginTop: 16,
+  },
+  addUserHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  addUserTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginLeft: 8,
+  },
+  addUserSub: {
+    color: colors.textMuted,
+    fontSize: 12,
+    marginTop: 4,
+    marginBottom: 12,
+  },
+  addUserInputGroup: {
+    marginTop: 12,
+  },
+  addUserLabel: {
+    color: colors.textMuted,
+    fontSize: 11,
+    marginBottom: 4,
+  },
+  addUserNumber: {
+    color: '#fff',
+    fontSize: 14,
+    paddingVertical: 8,
+  },
+  addUserInput: {
+    height: 44,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+    color: '#fff',
+    paddingHorizontal: 12,
+    fontSize: 14,
+  },
+  addUserActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 16,
+    gap: 12,
+  },
+  addUserActionBtn: {
+    flex: 1,
+    height: 44,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    flexDirection: 'row',
+  },
+  cancelBtn: {
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  cancelBtnText: {
+    color: colors.textMuted,
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  saveBtn: {
+    backgroundColor: colors.cyanAccent,
+  },
+  saveBtnText: {
+    color: '#000',
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginLeft: 6,
+  },
+  searchResultsContainer: {
+    marginTop: 16,
+  },
+  searchResultsCount: {
+    color: '#6B6E85',
+    fontSize: 12,
+    marginBottom: 12,
+  },
+  searchResultCard: {
+    width: '100%',
+    borderRadius: 14,
+    backgroundColor: '#07051f',
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 16,
+    marginBottom: 12,
+  },
+  resultHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  resultAvatar: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: colors.purpleAccent,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  resultAvatarText: {
+    color: '#fff',
+    fontSize: 22,
+    fontWeight: 'bold',
+  },
+  resultHeaderInfo: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  resultName: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  resultPhone: {
+    color: colors.textMuted,
+    fontSize: 13,
+    marginTop: 2,
+  },
+  resultDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginVertical: 12,
+  },
+  resultDetails: {
+    gap: 8,
+  },
+  resultDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  resultDetailLabel: {
+    color: '#6B6E85',
+    fontSize: 13,
+  },
+  resultDetailValue: {
+    color: '#fff',
+    fontSize: 13,
+    textAlign: 'right',
+    flex: 1,
+    marginLeft: 10,
+  },
+  resultActions: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginTop: 16,
+  },
+  resultActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    paddingVertical: 12,
+    borderRadius: 8,
+    minWidth: 120,
+  },
+  blockActionBtn: {
+    backgroundColor: colors.redDanger,
+  },
+  unblockActionBtn: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: colors.greenSuccess,
+  },
+  resultActionText: {
+    fontWeight: 'bold',
+    fontSize: 14,
+    marginLeft: 8,
+  },
+  listEmptyPlaceholder: {
+    width: '100%',
+    borderRadius: 12,
+    backgroundColor: colors.cardBackground,
+    padding: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  placeholderText: {
+    color: colors.textMuted,
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  historyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  historyIndicator: {
+    width: 4,
+    height: 40,
+    borderRadius: 2,
+    marginRight: 12,
+    backgroundColor: '#6B6E85',
+  },
+  historyLeft: {
+    flex: 1,
+  },
+  historyName: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  historyNumber: {
+    color: colors.textMuted,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  historyStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  historyDate: {
+    color: '#6B6E85',
+    fontSize: 11,
+  },
+  historyStatus: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    marginLeft: 8,
+  },
+  settingCard: {
+    width: '100%',
+    borderRadius: 16,
+    backgroundColor: colors.cardBackground,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 16,
+  },
+  settingTitle: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: 'bold',
+  },
+  settingSub: {
+    color: colors.textMuted,
+    fontSize: 12,
+    marginTop: 4,
+  },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  cardDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginVertical: 16,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  modalContent: {
+    borderRadius: 16,
+    backgroundColor: '#0F0A2B',
+    borderWidth: 1,
+    padding: 20,
+    maxWidth: 520,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  popupHeader: {
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  popupTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  popupSub: {
+    color: '#6B6E85',
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  popupRiskText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  popupDesc: {
+    color: '#9A8C98',
+    fontSize: 11,
+    textAlign: 'center',
+    lineHeight: 16,
+    marginVertical: 16,
+  },
+  popupActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginTop: 10,
+  },
+  popupBtn: {
+    flex: 0.48,
+    height: 40,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  popupBtnText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 13,
+  },
+  popupTextBtn: {
+    alignItems: 'center',
+    paddingVertical: 8,
+    flex: 0.48,
+  },
+  popupTextBtnText: {
+    color: '#6B6E85',
+    fontSize: 12,
+  },
+  reportFormLabel: {
+    color: '#6B6E85',
+    fontSize: 11,
+    marginBottom: 8,
+  },
+  radioRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 6,
+  },
+  radioOuter: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: colors.cyanAccent,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  radioInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.cyanAccent,
+  },
+  radioLabel: {
+    color: '#fff',
+    fontSize: 13,
+  },
+  reportInput: {
+    width: '100%',
+    height: 80,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(123, 44, 191, 0.2)',
+    backgroundColor: colors.background,
+    color: '#fff',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 13,
+    marginTop: 16,
+    textAlignVertical: 'top',
+  },
+  primaryBtn: {
+    height: 48,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: '100%',
+  },
+  primaryBtnText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  adHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+  },
+  adHeaderTag: {
+    fontSize: 9,
+    fontWeight: 'bold',
+    color: '#ffd900',
+    letterSpacing: 1,
+    marginLeft: 6,
+  },
+  adBanner: {
+    width: '100%',
+    height: 120,
+    borderRadius: 12,
+    backgroundColor: '#050B24',
+    borderWidth: 0.5,
+    borderColor: '#2874f033',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 14,
+    marginBottom: 16,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  adBannerTexts: {
+    position: 'absolute',
+    bottom: 20,
+    alignItems: 'center',
+  },
+  adBannerTitle: {
+    color: '#ffd900',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 2,
+  },
+  adBannerSub: {
+    color: '#fff',
+    fontSize: 8,
+    fontWeight: '500',
+  },
+  adMainTitle: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#fff',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  adDescription: {
+    fontSize: 11,
+    color: '#9a8c98',
+    textAlign: 'center',
+    lineHeight: 16,
+    marginBottom: 20,
+  },
+  adCtaBtn: {
+    width: '100%',
+    height: 48,
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 12,
+  },
+  adCtaGradient: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  adCtaBtnText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 13,
+  },
+});

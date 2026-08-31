@@ -34,9 +34,10 @@ Our app uses a proprietary **Tri-Layer Weighted Logic** to identify spam with 99
 
 ## 🛠️ Key Technical Features
 *   **Android 14 Compatibility**: Uses `CallScreeningService` and `RoleManager` to satisfy the latest security requirements.
-*   **Instant Identification**: Full-width professional popups appear before the phone rings.
+*   **Instant Identification**: Full-width professional popups appear before the phone rings, themed to match the app.
 *   **Smart History**: Accurate talk-duration tracking using `SystemClock.elapsedRealtime()`.
 *   **Data Integrity**: Direct `phone_number` indexing in the database for sub-second lookups.
+*   **Matched Visuals**: Popups use the same dark high-fidelity theme as the main dashboard.
 
 ---
 
