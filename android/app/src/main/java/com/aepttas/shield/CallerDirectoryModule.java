@@ -49,7 +49,6 @@ public class CallerDirectoryModule extends ReactContextBaseJavaModule {
                     map.putString("callerName", caller.callerName);
                     map.putString("phoneNumber", caller.phoneNumber);
                     map.putInt("riskScore", caller.riskScore);
-                    map.putInt("reputationScore", caller.reputationScore);
                     map.putInt("totalReports", caller.totalReports);
                     map.putBoolean("isSpam", caller.isSpam);
                     map.putBoolean("isBlocked", caller.isBlocked);

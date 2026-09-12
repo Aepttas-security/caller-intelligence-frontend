@@ -233,21 +233,22 @@ public class PopupService extends Service {
                         : WindowManager.LayoutParams.TYPE_PHONE;
 
                 layoutParams = new WindowManager.LayoutParams(
-                        WindowManager.LayoutParams.WRAP_CONTENT,
+                        WindowManager.LayoutParams.MATCH_PARENT,   // ✅ Full width
                         WindowManager.LayoutParams.WRAP_CONTENT,
                         layoutType,
                         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                                | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
                                 | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
                                 | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                                 | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
                                 | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
-                                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                                | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                         PixelFormat.TRANSLUCENT
                 );
 
-                layoutParams.gravity = Gravity.TOP;
-                layoutParams.y = 100; // Offset from top
+                layoutParams.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+                layoutParams.y = 120;
+                layoutParams.x = 0;
 
                 windowManager.addView(popupView, layoutParams);
 

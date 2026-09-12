@@ -149,16 +149,14 @@ public class ContactLookupService {
                 CallerEntity caller = new CallerEntity();
                 caller.phoneNumber    = phoneNumber;
                 caller.callerName     = json.optString("caller_name", "Unknown Caller");
-                caller.carrier        = json.optString("carrier",     "Unknown");
-                caller.location       = json.optString("location",    "Unknown");
-                caller.riskScore      = json.optInt("risk_score",     0);
-                caller.reputationScore= json.optInt("reputation_score", 50);
-                caller.totalReports   = json.optInt("total_reports",  0);
-                caller.callFrequency  = json.optInt("call_frequency", 0);
-                caller.isSpam         = json.optBoolean("is_spam",    false);
+                caller.carrier        = json.optString("carrier", "Unknown");
+                caller.location       = json.optString("location", "Unknown");
+                caller.riskScore      = json.optInt("risk_score", 50);
+                caller.isSpam         = json.optBoolean("is_spam", false);
                 caller.isBlocked      = json.optBoolean("is_blocked", false);
+                caller.totalReports   = json.optInt("total_reports", 0);
 
-                Log.d(TAG, "✅ Found in apt_callers_b: " + caller.callerName);
+                Log.d(TAG, "✅ Found: " + caller.callerName + " | Risk: " + caller.riskScore);
                 callback.onResult(caller);
 
             } else if (responseCode == 404) {
@@ -195,9 +193,7 @@ public class ContactLookupService {
         def.carrier         = "Unknown";
         def.location        = "Unknown";
         def.riskScore       = 50;
-        def.reputationScore = 50;
         def.totalReports    = 0;
-        def.callFrequency   = 0;
         def.isSpam          = false;
         def.isBlocked       = false;
         return def;

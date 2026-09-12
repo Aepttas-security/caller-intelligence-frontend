@@ -33,35 +33,8 @@ public class CallerEntity {
     @ColumnInfo(name = "risk_score")
     public int riskScore;
 
-    @ColumnInfo(name = "reputation_score")
-    public int reputationScore;
-
     @ColumnInfo(name = "total_reports")
     public int totalReports;
-
-    @ColumnInfo(name = "call_frequency")
-    public int callFrequency;
-
-    @ColumnInfo(name = "avg_duration")
-    public int avgDuration;
-
-    @ColumnInfo(name = "answered_calls")
-    public int answeredCalls;
-
-    @ColumnInfo(name = "total_calls")
-    public int totalCalls;
-
-    @ColumnInfo(name = "safe_reports")
-    public int safeReports;
-
-    @ColumnInfo(name = "last_report_date")
-    public Date lastReportDate;
-
-    @ColumnInfo(name = "previous_risk_score")
-    public int previousRiskScore;
-
-    @ColumnInfo(name = "risk_trend")
-    public float riskTrend;
 
     @ColumnInfo(name = "is_spam")
     public boolean isSpam;
@@ -79,6 +52,5 @@ public class CallerEntity {
         this.id = UUID.randomUUID();
         this.createdAt = new Date();
         this.updatedAt = new Date();
-        this.reputationScore = 50;
     }
 }
